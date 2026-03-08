@@ -41,6 +41,11 @@ body {
   background: var(--bg-base);
   color: var(--text-primary);
   min-height: 100vh;
+  min-width: 580px;
+  /* Minimum width for Chrome Extension Popup */
+  width: 100%;
+  /* Allow expanding in normal tab */
+  margin: 0;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
