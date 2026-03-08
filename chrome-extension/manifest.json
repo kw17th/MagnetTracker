@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "磁力追踪器 · MagnetTracker",
+  "version": "1.0.0",
+  "description": "追踪网页中的最新磁力链接，自动获取更新日期",
+  "permissions": [
+    "storage",
+    "alarms",
+    "notifications"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "查看最新磁力",
+    "default_icon": {
+      "128": "icon.png"
+    }
+  },
+  "icons": {
+    "128": "icon.png"
+  }
+}
