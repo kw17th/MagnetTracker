@@ -25,8 +25,8 @@ const PROXIES = [
   }
 ];
 const EXAMPLE_URLS = [
-  'https://www.xl720.com/thunder/60931.html',
-  'https://www.xl720.com/thunder/61088.html'
+  'https://www.dmhy.org/topics/list?keyword=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%93%AE&sort_id=0&team_id=767&order=date-desc',
+  'https://www.xl720.com/thunder/60931.html'
 ];
 const STORAGE_KEY = 'magnettracker_resources';
 const MAX_PREVIEW = 3; // max magnet rows shown on card
@@ -189,23 +189,44 @@ function parseHTML(html, sourceUrl) {
   // Parse with DOMParser (runs in browser sandbox)
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
+  const isDmhy = sourceUrl.includes('dmhy.org');
 
   // ── Title ──
-  const h1 = doc.querySelector('h1');
-  const titleEl = doc.querySelector('title');
-  const title = (h1 ? h1.textContent : (titleEl ? titleEl.textContent : ''))
-    .trim()
-    .replace(/[\r\n]+/g, ' ');
+  let title = '';
+  if (isDmhy) {
+    // Try to get keyword from input or title
+    const kwInput = doc.querySelector('#keyword');
+    const titleMatch = doc.title.match(/^(.+?)\s+-\s+动漫花园/);
+    title = (kwInput && kwInput.value.trim()) ? kwInput.value.trim() : (titleMatch ? titleMatch[1] : doc.title);
+    if (title) title = `[动漫花园] ${title}`;
+  } else {
+    const h1 = doc.querySelector('h1');
+    const titleEl = doc.querySelector('title');
+    title = (h1 ? h1.textContent : (titleEl ? titleEl.textContent : ''))
+      .trim();
+  }
+  title = title.replace(/[\r\n]+/g, ' ');
 
   // ── Update Date ──
   // The page has patterns like "更新：2026-3-7" or "更新: 2026-3-7" in metadata
-  const bodyText = doc.body ? doc.body.innerText || doc.body.textContent : html;
   let updateDate = null;
 
-  // Strategy 1: look for 更新：YYYY-M-D pattern
-  const updateMatch = bodyText.match(/更新[：:]\s*(\d{4}[-年\.\/]\d{1,2}[-月\.\/]\d{1,2})/);
-  if (updateMatch) {
-    updateDate = normalizeDate(updateMatch[1]);
+  if (isDmhy) {
+    // Strategy for DMHY: look for the absolute date in the hidden span, fallback to td text
+    const firstDateTd = doc.querySelector('#topic_list tbody tr td:nth-child(1)');
+    if (firstDateTd) {
+      const span = firstDateTd.querySelector('span');
+      updateDate = normalizeDate((span || firstDateTd).textContent);
+    }
+  }
+
+  if (!updateDate) {
+    const bodyText = doc.body ? doc.body.innerText || doc.body.textContent : html;
+    // Strategy 1: look for 更新：YYYY-M-D pattern
+    const updateMatch = bodyText.match(/更新[：:]\s*(\d{4}[-年\.\/]\d{1,2}[-月\.\/]\d{1,2})/);
+    if (updateMatch) {
+      updateDate = normalizeDate(updateMatch[1]);
+    }
   }
 
   // Strategy 2: look for og:updated_time or article:modified_time meta
@@ -224,7 +245,7 @@ function parseHTML(html, sourceUrl) {
   for (const a of anchors) {
     const href = a.getAttribute('href');
     // extract BTIH hash
-    const hashMatch = href.match(/btih:([a-fA-F0-9]{40})/i);
+    const hashMatch = href.match(/btih:([a-zA-Z0-9]{32,40})/i);
     const hash = hashMatch ? hashMatch[1].toUpperCase() : null;
     if (!hash || seen.has(hash)) continue;
     seen.add(hash);
@@ -232,7 +253,17 @@ function parseHTML(html, sourceUrl) {
     // extract display name from anchor text or title or dn= param
     const dnMatch = href.match(/[?&]dn=([^&]+)/);
     const dn = dnMatch ? decodeURIComponent(dnMatch[1]).replace(/\+/g, ' ') : null;
-    const text = a.textContent.trim() || dn || hash;
+
+    // For DMHY, the magnet link is often in an icon, so we look for sibling text or nearby link text
+    let text = a.textContent.trim();
+    if (isDmhy && !text) {
+      // Look for the title link in the same row
+      const row = a.closest('tr');
+      const titleLink = row ? row.querySelector('.title a[target="_blank"]') : null;
+      if (titleLink) text = titleLink.textContent.trim();
+    }
+
+    text = text || dn || hash;
 
     magnets.push({
       href,
@@ -247,20 +278,49 @@ function parseHTML(html, sourceUrl) {
 
 function normalizeDate(raw) {
   if (!raw) return null;
+  let text = raw.trim();
+
+  // Handle relative dates common in Chinese sites (like dmhy)
+  const now = new Date();
+  if (text.includes('今天')) {
+    text = text.replace('今天', formatDate(now));
+  } else if (text.includes('昨天')) {
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    text = text.replace('昨天', formatDate(yesterday));
+  } else if (text.includes('前天')) {
+    const beforeYesterday = new Date(now);
+    beforeYesterday.setDate(now.getDate() - 2);
+    text = text.replace('前天', formatDate(beforeYesterday));
+  }
+
   // convert Chinese date chars and various separators to YYYY-MM-DD
-  const cleaned = raw.trim()
+  const cleaned = text
     .replace(/年/g, '-').replace(/月/g, '-').replace(/日/g, '')
     .replace(/[\/\.]/g, '-');
+
   // pad single-digit months and days
   const parts = cleaned.split('-');
   if (parts.length >= 3) {
-    const [y, m, d] = parts;
-    return `${y}-${m.padStart(2, '0')}-${d.replace(/[^\d]/g, '').padStart(2, '0')}`;
+    const y = parts[0];
+    const m = parts[1].padStart(2, '0');
+    const d = parts[2].replace(/[^\d]/g, '').slice(0, 2).padStart(2, '0');
+    const timeMatch = cleaned.match(/(\d{2}:\d{2})/);
+    return `${y}-${m}-${d}${timeMatch ? ' ' + timeMatch[1] : ''}`;
   }
+
   // for ISO dates like 2026-03-07T...
   const isoMatch = raw.match(/(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/);
   if (isoMatch) return `${isoMatch[1]} ${isoMatch[2]}`;
-  return cleaned;
+
+  return text;
+}
+
+function formatDate(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 // ── Render ─────────────────────────────────────────────
