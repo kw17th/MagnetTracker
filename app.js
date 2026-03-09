@@ -70,10 +70,10 @@ async function init() {
 }
 init();
 
-// ── Cross-device Sync ──────────────────────────────────────────────────────
+// ── Storage Change Listener ──────────────────────────────────────────────────
 if (typeof chrome !== 'undefined' && chrome.storage) {
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'sync' && changes[STORAGE_KEY]) {
+    if (area === 'local' && changes[STORAGE_KEY]) {
       resources = changes[STORAGE_KEY].newValue ?? [];
       renderAll();
     }
@@ -662,7 +662,7 @@ function resourceById(id) {
 
 async function saveResources() {
   try {
-    await chrome.storage.sync.set({ [STORAGE_KEY]: resources });
+    await chrome.storage.local.set({ [STORAGE_KEY]: resources });
   } catch (err) {
     if (err.message?.includes('QUOTA_BYTES')) {
       showError('云同步存储空间已满，请删除部分链接后重试');
@@ -676,17 +676,17 @@ async function loadResources() {
   if (legacyRaw) {
     try {
       const legacyData = JSON.parse(legacyRaw);
-      await chrome.storage.sync.set({ [STORAGE_KEY]: legacyData });
+      await chrome.storage.local.set({ [STORAGE_KEY]: legacyData });
       localStorage.removeItem(STORAGE_KEY);
-      console.log('[MagnetTracker] 已将本地数据迁移到云同步存储');
+      console.log('[MagnetTracker] 已将本地数据迁移到扩展存储');
     } catch (e) {
       console.warn('[MagnetTracker] Legacy data migration failed:', e);
     }
   }
 
-  // 从 chrome.storage.sync 读取
+  // 从 chrome.storage.local 读取
   try {
-    const result = await chrome.storage.sync.get(STORAGE_KEY);
+    const result = await chrome.storage.local.get(STORAGE_KEY);
     return result[STORAGE_KEY] ?? [];
   } catch {
     return [];
