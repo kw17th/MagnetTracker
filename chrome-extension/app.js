@@ -13,7 +13,7 @@ const STORAGE_KEY = 'magnettracker_resources';
 const MAX_PREVIEW = 3; // max magnet rows shown on card
 
 // ── State ──────────────────────────────────────────────
-let resources = loadResources();
+let resources = [];
 
 // ── DOM Refs ───────────────────────────────────────────
 const urlInput = document.getElementById('urlInput');
@@ -66,7 +66,21 @@ function handleAction(e) {
   }
 }
 
-renderAll();
+async function init() {
+  resources = await loadResources();
+  renderAll();
+}
+init();
+
+// ── Cross-device Sync ──────────────────────────────────
+if (typeof chrome !== 'undefined' && chrome.storage) {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'sync' && changes[STORAGE_KEY]) {
+      resources = changes[STORAGE_KEY].newValue ?? [];
+      renderAll();
+    }
+  });
+}
 
 // ── Core Functions ─────────────────────────────────────
 
@@ -636,14 +650,34 @@ function resourceById(id) {
 
 // ── Persistence ────────────────────────────────────────
 
-function saveResources() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(resources));
+async function saveResources() {
+  try {
+    await chrome.storage.sync.set({ [STORAGE_KEY]: resources });
+  } catch (err) {
+    if (err.message?.includes('QUOTA_BYTES')) {
+      showError('云同步存储空间已满，请删除部分链接后重试');
+    }
+  }
 }
 
-function loadResources() {
+async function loadResources() {
+  // 迁移旧 localStorage 数据（首次运行时执行一次）
+  const legacyRaw = localStorage.getItem(STORAGE_KEY);
+  if (legacyRaw) {
+    try {
+      const legacyData = JSON.parse(legacyRaw);
+      await chrome.storage.sync.set({ [STORAGE_KEY]: legacyData });
+      localStorage.removeItem(STORAGE_KEY);
+      console.log('[MagnetTracker] 已将本地数据迁移到云同步存储');
+    } catch (e) {
+      console.warn('[MagnetTracker] Legacy data migration failed:', e);
+    }
+  }
+
+  // 从 chrome.storage.sync 读取
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const result = await chrome.storage.sync.get(STORAGE_KEY);
+    return result[STORAGE_KEY] ?? [];
   } catch {
     return [];
   }
