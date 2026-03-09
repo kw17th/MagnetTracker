@@ -25,7 +25,32 @@
   --radius: 16px;
   --radius-sm: 10px;
   --transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+  --bg-modal: #13141c;
+  --bg-dropdown: #1a1b26;
+  --bg-magnet-row: rgba(255, 255, 255, 0.025);
+  --bg-magnet-row-hover: rgba(108, 99, 255, 0.06);
   font-size: 15px;
+}
+
+:root[data-theme="light"] {
+  --bg-base: #f7f9fc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #ffffff;
+  --bg-panel: rgba(255, 255, 255, 0.85);
+  --bg-input: #ffffff;
+  --border: rgba(0, 0, 0, 0.08);
+  --border-strong: rgba(0, 0, 0, 0.15);
+  --text-primary: #1a1b26;
+  --text-secondary: #474b59;
+  --text-muted: #8b92a5;
+  --accent-glow: rgba(108, 99, 255, 0.15);
+  --green-bg: rgba(34, 211, 165, 0.15);
+  --red-bg: rgba(255, 95, 109, 0.12);
+  --yellow-bg: rgba(247, 201, 72, 0.15);
+  --bg-modal: #ffffff;
+  --bg-dropdown: #ffffff;
+  --bg-magnet-row: rgba(0, 0, 0, 0.02);
+  --bg-magnet-row-hover: rgba(108, 99, 255, 0.05);
 }
 
 *,
@@ -41,8 +66,10 @@ body {
   background: var(--bg-base);
   color: var(--text-primary);
   min-height: 100vh;
-  min-width: 580px; /* Minimum width for Chrome Extension Popup */
-  width: 100%; /* Allow expanding in normal tab */
+  min-width: 580px;
+  /* Minimum width for Chrome Extension Popup */
+  width: 100%;
+  /* Allow expanding in normal tab */
   margin: 0;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
@@ -249,7 +276,7 @@ body {
 }
 
 .select-rounded option {
-  background-color: #1a1b26;
+  background-color: var(--bg-dropdown);
   color: var(--text-primary);
 }
 
@@ -596,7 +623,7 @@ body {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--bg-magnet-row);
   border-radius: var(--radius-sm);
   margin-bottom: 8px;
   border: 1px solid var(--border);
@@ -608,7 +635,7 @@ body {
 }
 
 .magnet-row:hover {
-  background: rgba(108, 99, 255, 0.06);
+  background: var(--bg-magnet-row-hover);
 }
 
 .magnet-icon {
@@ -728,7 +755,7 @@ body {
 }
 
 .modal {
-  background: #13141c;
+  background: var(--bg-modal);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   width: 100%;

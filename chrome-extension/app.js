@@ -19,6 +19,8 @@ let resources = [];
 const urlInput = document.getElementById('urlInput');
 const addUrlBtn = document.getElementById('addUrlBtn');
 const refreshAllBtn = document.getElementById('refreshAllBtn');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
+const themeIcon = document.getElementById('themeIcon');
 const copyAllLatestBtn = document.getElementById('copyAllLatestBtn');
 const openInTabBtn = document.getElementById('openInTabBtn');
 const resFilter = document.getElementById('resFilter');
@@ -32,6 +34,60 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalClose = document.getElementById('modalClose');
+
+// ── Init Theme ─────────────────────────────────────────
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(mode) {
+  const theme = mode === 'auto' ? getSystemTheme() : mode;
+  document.documentElement.setAttribute('data-theme', theme);
+  updateThemeIcon(mode);
+}
+
+function initTheme() {
+  const savedMode = localStorage.getItem('magnettracker_theme') || 'auto';
+  applyTheme(savedMode);
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', () => {
+      const currentMode = localStorage.getItem('magnettracker_theme') || 'auto';
+      // Cycle: auto -> light -> dark -> auto
+      let nextMode = 'auto';
+      if (currentMode === 'auto') nextMode = 'light';
+      else if (currentMode === 'light') nextMode = 'dark';
+
+      localStorage.setItem('magnettracker_theme', nextMode);
+      applyTheme(nextMode);
+    });
+  }
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if ((localStorage.getItem('magnettracker_theme') || 'auto') === 'auto') {
+      applyTheme('auto');
+    }
+  });
+}
+
+function updateThemeIcon(mode) {
+  if (!themeToggleBtn || !themeIcon) return;
+  if (mode === 'light') {
+    // Sun icon
+    themeIcon.innerHTML = `<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>`;
+    themeToggleBtn.title = "当前: 白天模式 (点击切换为夜间)";
+  } else if (mode === 'dark') {
+    // Moon icon
+    themeIcon.innerHTML = `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>`;
+    themeToggleBtn.title = "当前: 夜间模式 (点击切换为跟随系统)";
+  } else {
+    // Auto (Monitor) icon
+    themeIcon.innerHTML = `<rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line>`;
+    themeToggleBtn.title = "当前: 跟随系统 (点击切换为白天)";
+  }
+}
+initTheme();
 
 // ── Init ───────────────────────────────────────────────
 document.getElementById('example1').addEventListener('click', () => addUrl(EXAMPLE_URLS[0]));
