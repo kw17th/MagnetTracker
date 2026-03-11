@@ -5,7 +5,6 @@
    ===================================================== */
 
 // ── Constants ──────────────────────────────────────────
-// Multiple CORS proxy options — tried in sequence until one works
 const PROXIES = [
   {
     type: 'corsproxy',
@@ -28,8 +27,14 @@ const EXAMPLE_URLS = [
   'https://www.dmhy.org/topics/list?keyword=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%93%AE&sort_id=0&team_id=767&order=date-desc',
   'https://www.xl720.com/thunder/60931.html'
 ];
-const STORAGE_KEY = 'magnettracker_resources';
+const STORAGE_KEY_LOCAL = 'magnettracker_resources';
+const STORAGE_KEY_SYNC = 'magnettracker_sync';
+const STORAGE_KEY_AUTO_REFRESH = 'magnettracker_last_auto_refresh';
+const AUTO_REFRESH_SLOTS = [7, 12, 18]; // 7:00, 12:00, 18:00
 const MAX_PREVIEW = 3; // max magnet rows shown on card
+
+// ── Environment Helper ──
+const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
 
 // ── State ──────────────────────────────────────────────
 let resources = [];
@@ -38,6 +43,8 @@ let resources = [];
 const urlInput = document.getElementById('urlInput');
 const addUrlBtn = document.getElementById('addUrlBtn');
 const refreshAllBtn = document.getElementById('refreshAllBtn');
+const themeToggleBtn = document.getElementById('themeToggleBtn');
+const themeIcon = document.getElementById('themeIcon');
 const copyAllLatestBtn = document.getElementById('copyAllLatestBtn');
 const openInTabBtn = document.getElementById('openInTabBtn');
 const resFilter = document.getElementById('resFilter');
@@ -52,6 +59,60 @@ const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalClose = document.getElementById('modalClose');
 
+// ── Init Theme ─────────────────────────────────────────
+function getSystemTheme() {
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function applyTheme(mode) {
+  const theme = mode === 'auto' ? getSystemTheme() : mode;
+  document.documentElement.setAttribute('data-theme', theme);
+  updateThemeIcon(mode);
+}
+
+function initTheme() {
+  const savedMode = localStorage.getItem('magnettracker_theme') || 'auto';
+  applyTheme(savedMode);
+
+  if (themeToggleBtn) {
+    themeToggleBtn.addEventListener('click', () => {
+      const currentMode = localStorage.getItem('magnettracker_theme') || 'auto';
+      // Cycle: auto -> light -> dark -> auto
+      let nextMode = 'auto';
+      if (currentMode === 'auto') nextMode = 'light';
+      else if (currentMode === 'light') nextMode = 'dark';
+
+      localStorage.setItem('magnettracker_theme', nextMode);
+      applyTheme(nextMode);
+    });
+  }
+
+  // Listen for system theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if ((localStorage.getItem('magnettracker_theme') || 'auto') === 'auto') {
+      applyTheme('auto');
+    }
+  });
+}
+
+function updateThemeIcon(mode) {
+  if (!themeToggleBtn || !themeIcon) return;
+  if (mode === 'light') {
+    // Sun icon
+    themeIcon.innerHTML = `<circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>`;
+    themeToggleBtn.title = "当前: 白天模式 (点击切换为夜间)";
+  } else if (mode === 'dark') {
+    // Moon icon
+    themeIcon.innerHTML = `<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>`;
+    themeToggleBtn.title = "当前: 夜间模式 (点击切换为跟随系统)";
+  } else {
+    // Auto (Monitor) icon
+    themeIcon.innerHTML = `<rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect><line x1="8" y1="21" x2="16" y2="21"></line><line x1="12" y1="17" x2="12" y2="21"></line>`;
+    themeToggleBtn.title = "当前: 跟随系统 (点击切换为白天)";
+  }
+}
+initTheme();
+
 // ── Init ───────────────────────────────────────────────
 document.getElementById('example1').addEventListener('click', () => addUrl(EXAMPLE_URLS[0]));
 document.getElementById('example2').addEventListener('click', () => addUrl(EXAMPLE_URLS[1]));
@@ -59,18 +120,79 @@ addUrlBtn.addEventListener('click', () => addUrl(urlInput.value.trim()));
 urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addUrl(urlInput.value.trim()); });
 refreshAllBtn.addEventListener('click', refreshAll);
 copyAllLatestBtn.addEventListener('click', copyAllLatest);
-if (openInTabBtn) openInTabBtn.addEventListener('click', () => { chrome?.tabs ? chrome.tabs.create({ url: chrome.runtime.getURL("index.html") }) : window.open('index.html', '_blank'); });
+if (openInTabBtn) openInTabBtn.addEventListener('click', () => { chrome.tabs.create({ url: chrome.runtime.getURL("index.html") }); });
 resFilter.addEventListener('change', renderAll);
 modalClose.addEventListener('click', closeModal);
 modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) closeModal(); });
 
+// Add event delegation for dynamic buttons
+cardsGrid.addEventListener('click', handleAction);
+modalBody.addEventListener('click', handleAction);
+
+function handleAction(e) {
+  const btn = e.target.closest('button[data-action]');
+  if (!btn) return;
+
+  const action = btn.dataset.action;
+  const id = btn.dataset.id;
+
+  if (action === 'delete') deleteResource(id);
+  else if (action === 'refresh-one') refreshOne(id);
+  else if (action === 'open-modal') openMagnetModal(id);
+  else if (action === 'copy-magnet') {
+    const href = btn.dataset.href;
+    const hash = btn.dataset.hash;
+    copyMagnet(btn, href, id, hash);
+  }
+}
+
 async function init() {
   resources = await loadResources();
   renderAll();
+  checkAutoRefresh();
+
+  // If any resource was restored from sync without magnets, trigger a refresh
+  if (resources.some(r => r._needsRefresh)) {
+    console.log('[MagnetTracker] Restored tracked items from sync, performing initial fetch...');
+    refreshAll();
+  }
 }
 init();
 
-// ── Storage Change Listener ──────────────────────────────────────────────────
+async function checkAutoRefresh() {
+  const now = new Date();
+  const currentHour = now.getHours();
+  // Use local date string instead of ISO to ensure day-to-day consistency in any timezone
+  const todayStr = now.toLocaleDateString('sv-SE'); // YYYY-MM-DD in Swedish locale is reliable
+
+  // Find the active slot (the most recent scheduled hour that has passed)
+  // Slots: [7, 12, 18]
+  let activeSlot = null;
+  for (const slot of AUTO_REFRESH_SLOTS) {
+    if (currentHour >= slot) {
+      activeSlot = slot;
+    }
+  }
+
+  if (activeSlot === null) return;
+
+  const lastRefresh = await getStorageItem(STORAGE_KEY_AUTO_REFRESH) || {};
+
+  // If we haven't refreshed for this slot today, do it now
+  if (lastRefresh.date !== todayStr || lastRefresh.slot !== activeSlot) {
+    console.log(`[MagnetTracker] Auto-refresh triggered for slot: ${activeSlot}:00`);
+    showStatus(`正在自动刷新 (${activeSlot}:00 档期)...`);
+    
+    await refreshAll();
+    
+    // Save that we've done this slot today
+    await setStorageItem(STORAGE_KEY_AUTO_REFRESH, { date: todayStr, slot: activeSlot });
+    
+    hideStatus();
+  }
+}
+
+// ── Storage Change Listener ──────────────────────────────
 if (typeof chrome !== 'undefined' && chrome.storage) {
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[STORAGE_KEY]) {
@@ -152,6 +274,22 @@ async function fetchResource(id) {
 
 async function fetchWithFallback(url) {
   let lastError = null;
+
+  // 1. Try Direct Fetch if in Extension (privileged)
+  if (isExtension) {
+    try {
+      const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (resp.ok) {
+        const buffer = await resp.arrayBuffer();
+        const html = await smartDecode(buffer);
+        if (html && html.length > 200) return html;
+      }
+    } catch (e) {
+      console.warn('[MagnetTracker] Direct fetch failed, falling back to proxies:', e.message);
+    }
+  }
+
+  // 2. Try Proxies
   for (const proxy of PROXIES) {
     try {
       const endpoint = proxy.build(url);
@@ -164,18 +302,16 @@ async function fetchWithFallback(url) {
         html = await smartDecode(buffer);
       } else {
         html = await proxy.extract(resp);
-        // If it's already a string but we suspect it was GBK, it might still be mangled.
-        // allorigins usually handles this poorly if we don't know the charset.
       }
 
       if (!html || html.length < 200) throw new Error('响应内容过短');
       return html;
     } catch (e) {
       lastError = e;
-      console.warn('[MagnetTracker] proxy failed:', proxy.type, e.message);
+      console.warn('[MagnetTracker] Proxy failed:', proxy.type, e.message);
     }
   }
-  throw new Error(`所有代理均失败：${lastError?.message || '网络错误'}`);
+  throw new Error(`所有获取方式均失败：${lastError?.message || '网络错误'}`);
 }
 
 async function smartDecode(buffer) {
@@ -429,7 +565,7 @@ function buildCard(r, index) {
 
   const seeAllBtn = (r.magnets.length > MAX_PREVIEW)
     ? `<div class="card-footer">
-        <button class="see-all-btn" onclick="openMagnetModal('${r.id}')">
+        <button class="see-all-btn" data-action="open-modal" data-id="${r.id}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
           查看全部 ${r.magnets.length} 个磁力链接
         </button>
@@ -444,10 +580,10 @@ function buildCard(r, index) {
         <div class="card-url">${escHtml(r.url)}</div>
       </div>
       <div class="card-actions">
-        <button class="btn btn-icon" title="刷新" onclick="refreshOne('${r.id}')">
+        <button class="btn btn-icon" title="刷新" data-action="refresh-one" data-id="${r.id}">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
         </button>
-        <button class="btn btn-icon btn-danger" title="删除" onclick="deleteResource('${r.id}')">
+        <button class="btn btn-icon btn-danger" title="删除" data-action="delete" data-id="${r.id}">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
         </button>
       </div>
@@ -479,7 +615,7 @@ function buildMagnetRowHtml(m) {
         <div class="magnet-name">${escHtml(m.name)}</div>
         <div class="magnet-hash">${escHtml(shortHash)}</div>
       </div>
-      <button class="magnet-copy-btn" onclick="copyMagnet(this, '${escapedHref.replace(/'/g, "\\'")}', '${m.resourceId}', '${m.hash}')">
+      <button class="magnet-copy-btn" data-action="copy-magnet" data-href="${escapedHref}" data-id="${m.resourceId}" data-hash="${m.hash}">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         复制
       </button>
@@ -660,37 +796,98 @@ function resourceById(id) {
 
 // ── Persistence ────────────────────────────────────────
 
+// ── Persistence ────────────────────────────────────────
+
+async function getStorageItem(key) {
+  if (isExtension) {
+    const result = await chrome.storage.local.get(key);
+    return result[key];
+  }
+  const val = localStorage.getItem(key);
+  try { return val ? JSON.parse(val) : undefined; } catch { return val; }
+}
+
+async function setStorageItem(key, value) {
+  if (isExtension) {
+    return chrome.storage.local.set({ [key]: value });
+  }
+  localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
+}
+
 async function saveResources() {
+  // Sync Data: Only metadata for across-device persistence (100KB limit)
+  const syncData = resources.map(r => ({
+    id: r.id,
+    url: r.url,
+    title: r.title,
+    copiedHashes: r.copiedHashes || []
+  }));
+
   try {
-    await chrome.storage.local.set({ [STORAGE_KEY]: resources });
+    if (isExtension) {
+      // Chrome Sync: persists even if uninstalled
+      await chrome.storage.sync.set({ [STORAGE_KEY_SYNC]: syncData });
+      // Chrome Local: full detail cache
+      await chrome.storage.local.set({ [STORAGE_KEY_LOCAL]: resources });
+    } else {
+      localStorage.setItem(STORAGE_KEY_LOCAL, JSON.stringify(resources));
+    }
   } catch (err) {
+    console.error('[MagnetTracker] Storage error:', err);
     if (err.message?.includes('QUOTA_BYTES')) {
-      showError('云同步存储空间已满，请删除部分链接后重试');
+      showError('同步空间(100KB)已满，仅保存于本地。');
     }
   }
 }
 
 async function loadResources() {
-  // 迁移旧 localStorage 数据（首次运行时执行一次）
-  const legacyRaw = localStorage.getItem(STORAGE_KEY);
-  if (legacyRaw) {
+  if (isExtension) {
     try {
-      const legacyData = JSON.parse(legacyRaw);
-      await chrome.storage.local.set({ [STORAGE_KEY]: legacyData });
-      localStorage.removeItem(STORAGE_KEY);
-      console.log('[MagnetTracker] 已将本地数据迁移到扩展存储');
-    } catch (e) {
-      console.warn('[MagnetTracker] Legacy data migration failed:', e);
+      const syncRes = await chrome.storage.sync.get(STORAGE_KEY_SYNC);
+      const syncData = syncRes[STORAGE_KEY_SYNC] || [];
+      
+      const localRes = await chrome.storage.local.get(STORAGE_KEY_LOCAL);
+      const localData = localRes[STORAGE_KEY_LOCAL] || [];
+      
+      // Case 1: Fresh install or local cleared - recover from sync
+      if (syncData.length > 0 && localData.length === 0) {
+        return syncData.map(s => ({
+          ...s,
+          magnets: [],
+          lastUpdate: null,
+          _needsRefresh: true
+        }));
+      }
+      
+      // Case 2: Merge synced copy status and catch new background additions
+      const merged = syncData.map(s => {
+        const local = localData.find(l => l.url === s.url);
+        if (local) {
+          // Exists locally: merge state
+          return {
+            ...local,
+            copiedHashes: s.copiedHashes || [],
+            title: s.title || local.title
+          };
+        } else {
+          // New background addition: mark for refresh
+          return {
+            ...s,
+            magnets: [],
+            lastUpdate: null,
+            _needsRefresh: true
+          };
+        }
+      });
+
+      return merged;
+    } catch (err) {
+      console.error('[MagnetTracker] Load error:', err);
+      return [];
     }
   }
-
-  // 从 chrome.storage.local 读取
-  try {
-    const result = await chrome.storage.local.get(STORAGE_KEY);
-    return result[STORAGE_KEY] ?? [];
-  } catch {
-    return [];
-  }
+  const val = localStorage.getItem(STORAGE_KEY_LOCAL);
+  try { return val ? (JSON.parse(val) || []) : []; } catch { return []; }
 }
 
 // ── Utilities ──────────────────────────────────────────
