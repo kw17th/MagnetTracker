@@ -18,7 +18,7 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: "add-to-magnettracker",
       title: "添加链接到 MagnetTracker",
-      contexts: ["link"]
+      contexts: ["link", "page"]
     });
   });
 });
@@ -26,7 +26,7 @@ chrome.runtime.onInstalled.addListener(() => {
 // Handle context menu clicks
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === "add-to-magnettracker") {
-    const linkUrl = info.linkUrl;
+    const linkUrl = info.linkUrl || info.pageUrl;
     if (!linkUrl) {
       console.warn('[MagnetTracker] No link URL found in context menu click.');
       return;

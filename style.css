@@ -66,9 +66,9 @@ body {
   background: var(--bg-base);
   color: var(--text-primary);
   min-height: 100vh;
-  min-width: 800px;
-  width: 800px;
-  /* Fixed width for Chrome Extension Popup */
+  min-width: 500px;
+  width: 700px;
+  max-width: 100%;
   margin: 0;
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
@@ -151,7 +151,8 @@ body {
   padding: 24px 0 20px;
   border-bottom: 1px solid var(--border);
   margin-bottom: 24px;
-  flex-wrap: nowrap; /* Strictly single-line */
+  flex-wrap: wrap; /* Allows components to wrap gracefully */
+  gap: 16px;
 }
 
 .logo {
@@ -270,6 +271,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .filter-group {
@@ -843,4 +845,69 @@ body {
 /* ── Utilities ── */
 .hidden {
   display: none !important;
+}
+
+/* ── Synology Form ── */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 15px;
+}
+
+.form-group label {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  font-weight: 500;
+}
+
+.form-group input {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  outline: none;
+  transition: all var(--transition);
+}
+
+.form-group input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.form-group .input-disabled {
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.magnet-syno-btn {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: inherit;
+  margin-left: 5px;
+}
+
+.magnet-syno-btn:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.magnet-syno-btn.success {
+  background: var(--green-bg);
+  border-color: var(--green);
+  color: var(--green);
 }

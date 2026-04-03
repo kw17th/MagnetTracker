@@ -38,6 +38,7 @@ const isExtension = typeof chrome !== 'undefined' && !!chrome.runtime?.id;
 
 // ── State ──────────────────────────────────────────────
 let resources = [];
+let synoConfig = { user: '', pass: '', url: 'http://192.168.7.11:5000/' };
 
 // ── DOM Refs ───────────────────────────────────────────
 const urlInput = document.getElementById('urlInput');
@@ -58,6 +59,16 @@ const modalOverlay = document.getElementById('modalOverlay');
 const modalTitle = document.getElementById('modalTitle');
 const modalBody = document.getElementById('modalBody');
 const modalClose = document.getElementById('modalClose');
+
+// Synology Ref
+const synoSettingsBtn = document.getElementById('synoSettingsBtn');
+const sendAllNasBtn = document.getElementById('sendAllNasBtn');
+const synoModalOverlay = document.getElementById('synoModalOverlay');
+const synoModalClose = document.getElementById('synoModalClose');
+const synoUrlEl = document.getElementById('synoUrl');
+const synoUserEl = document.getElementById('synoUser');
+const synoPassEl = document.getElementById('synoPass');
+const saveSynoBtn = document.getElementById('saveSynoBtn');
 
 // ── Init Theme ─────────────────────────────────────────
 function getSystemTheme() {
@@ -129,6 +140,27 @@ modalOverlay.addEventListener('click', e => { if (e.target === modalOverlay) clo
 cardsGrid.addEventListener('click', handleAction);
 modalBody.addEventListener('click', handleAction);
 
+if (synoSettingsBtn) {
+  synoSettingsBtn.addEventListener('click', () => {
+    if (synoUrlEl) synoUrlEl.value = synoConfig.url || 'http://192.168.7.11:5000/';
+    if (synoUserEl) synoUserEl.value = synoConfig.user || '';
+    if (synoPassEl) synoPassEl.value = synoConfig.pass || '';
+    synoModalOverlay.classList.remove('hidden');
+  });
+}
+if (synoModalClose) {
+  synoModalClose.addEventListener('click', () => synoModalOverlay.classList.add('hidden'));
+}
+if (synoModalOverlay) {
+  synoModalOverlay.addEventListener('click', e => { if (e.target === synoModalOverlay) synoModalOverlay.classList.add('hidden'); });
+}
+if (saveSynoBtn) {
+  saveSynoBtn.addEventListener('click', handleSaveSynoConfig);
+}
+if (sendAllNasBtn) {
+  sendAllNasBtn.addEventListener('click', sendAllLatestToNas);
+}
+
 function handleAction(e) {
   const btn = e.target.closest('button[data-action]');
   if (!btn) return;
@@ -144,10 +176,18 @@ function handleAction(e) {
     const hash = btn.dataset.hash;
     copyMagnet(btn, href, id, hash);
   }
+  else if (action === 'send-nas') {
+    const href = btn.dataset.href;
+    const hash = btn.dataset.hash;
+    sendToNas(btn, href, id, hash);
+  }
 }
 
 async function init() {
   resources = await loadResources();
+  const loadedConfig = await getStorageItem('magnettracker_synoconfig');
+  if (loadedConfig) synoConfig = loadedConfig;
+
   renderAll();
   checkAutoRefresh();
 
@@ -194,9 +234,13 @@ async function checkAutoRefresh() {
 
 // ── Storage Change Listener ──────────────────────────────
 if (typeof chrome !== 'undefined' && chrome.storage) {
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === 'local' && changes[STORAGE_KEY]) {
-      resources = changes[STORAGE_KEY].newValue ?? [];
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area === 'local' && changes[STORAGE_KEY_LOCAL]) {
+      resources = changes[STORAGE_KEY_LOCAL].newValue ?? [];
+      renderAll();
+    } else if (area === 'sync' && changes[STORAGE_KEY_SYNC]) {
+      // If sync changed (like via context menu in background), reload all
+      resources = await loadResources();
       renderAll();
     }
   });
@@ -619,6 +663,13 @@ function buildMagnetRowHtml(m) {
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         复制
       </button>
+      <button class="magnet-syno-btn" data-action="send-nas" data-href="${escapedHref}" data-id="${m.resourceId}" data-hash="${m.hash}" title="推送到 NAS">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>
+      </button>
     </div>
   `;
 }
@@ -755,6 +806,195 @@ async function copyMagnet(btn, href, id, hash) {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
+  }
+}
+
+// ── Synology Logic ──────────────────────────────────────
+
+async function handleSaveSynoConfig() {
+  const urlBase = synoUrlEl ? synoUrlEl.value.trim() : 'http://192.168.7.11:5000/';
+  const user = synoUserEl ? synoUserEl.value.trim() : '';
+  const pass = synoPassEl ? synoPassEl.value : '';
+
+  if (!urlBase || !user || !pass) {
+    showError('请输入地址、用户名和密码');
+    return;
+  }
+  
+  // Ensure urlBase ends with /
+  const formattedUrl = urlBase.endsWith('/') ? urlBase : urlBase + '/';
+
+  saveSynoBtn.disabled = true;
+  saveSynoBtn.textContent = '测试连接中...';
+
+  try {
+    const sid = await loginSynology(formattedUrl, user, pass);
+    synoConfig.url = formattedUrl;
+    synoConfig.user = user;
+    synoConfig.pass = pass;
+    synoConfig.sid = sid;
+    await setStorageItem('magnettracker_synoconfig', { url: formattedUrl, user, pass });
+    synoModalOverlay.classList.add('hidden');
+    saveSynoBtn.textContent = '保存成功！';
+    setTimeout(() => {
+      saveSynoBtn.disabled = false;
+      saveSynoBtn.textContent = '保存 & 测试连接';
+    }, 2000);
+  } catch (err) {
+    console.error('[MagnetTracker] Synology login error:', err);
+    showError('连接 Synology 失败 (' + formattedUrl + '): ' + err.message);
+    saveSynoBtn.disabled = false;
+    saveSynoBtn.textContent = '保存 & 测试连接';
+  }
+}
+
+async function loginSynology(baseUrl, user, pass) {
+  // Try api=SYNO.API.Auth for DownloadStation
+  const authEndpoint = baseUrl.includes('webapi') ? '' : 'webapi/';
+  const url = `${baseUrl}${authEndpoint}auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=${encodeURIComponent(user)}&passwd=${encodeURIComponent(pass)}&session=DownloadStation&format=cookie`;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const data = await resp.json();
+    if (data && data.success) {
+      return data.data.sid;
+    } else {
+      throw new Error('认证被拒绝 (Code: ' + (data?.error?.code || 'Unknown') + ')');
+    }
+  } catch(e) {
+    throw new Error(e.message || '网络连接失败，请检查 NAS 地址或 HTTPS 证书问题。');
+  }
+}
+
+async function createSynoTask(uri) {
+  if (!synoConfig.user || !synoConfig.pass) {
+    throw new Error('未配置 NAS 账号，请先在右上角设置中配置');
+  }
+
+  const baseUrl = synoConfig.url || 'http://192.168.7.11:5000/';
+  const authEndpoint = baseUrl.includes('webapi') ? '' : 'webapi/';
+
+  if (!synoConfig.sid) {
+    synoConfig.sid = await loginSynology(baseUrl, synoConfig.user, synoConfig.pass);
+  }
+
+  const url = `${baseUrl}${authEndpoint}DownloadStation/task.cgi?api=SYNO.DownloadStation.Task&version=1&method=create&uri=${encodeURIComponent(uri)}&_sid=${synoConfig.sid}`;
+  try {
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    const data = await resp.json();
+    
+    if (data && data.success) {
+      return true;
+    } else if (data && data.error && (data.error.code === 105 || data.error.code === 119)) {
+      // Session expired or invalid, retry login
+      synoConfig.sid = await loginSynology(baseUrl, synoConfig.user, synoConfig.pass);
+      const retryUrl = `${baseUrl}${authEndpoint}DownloadStation/task.cgi?api=SYNO.DownloadStation.Task&version=1&method=create&uri=${encodeURIComponent(uri)}&_sid=${synoConfig.sid}`;
+      const retryResp = await fetch(retryUrl);
+      const retryData = await retryResp.json();
+      if (retryData && retryData.success) return true;
+      throw new Error('推送失败 (Code: ' + (retryData?.error?.code || 'Unknown') + ')');
+    } else {
+      throw new Error('推送失败 (Code: ' + (data?.error?.code || 'Unknown') + ')');
+    }
+  } catch(e) {
+    throw new Error('网络请求异常: ' + (e.message || 'Unknown network error.'));
+  }
+}
+
+async function sendToNas(btn, href, id, hash) {
+  try {
+    btn.innerHTML = `<div class="status-spinner" style="width:12px;height:12px;border-width:2px;margin:auto;"></div>`;
+    await createSynoTask(href);
+
+    // mark as copied
+    const r = resourceById(id);
+    if (r) {
+      if (!r.copiedHashes) r.copiedHashes = [];
+      if (!r.copiedHashes.includes(hash)) {
+        r.copiedHashes.push(hash);
+        saveResources();
+      }
+    }
+
+    btn.classList.add('success');
+    btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>`;
+    
+    setTimeout(() => {
+      btn.classList.remove('success');
+      btn.innerHTML = `
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="17 8 12 3 7 8"></polyline>
+          <line x1="12" y1="3" x2="12" y2="15"></line>
+        </svg>`;
+      renderAll();
+    }, 2000);
+  } catch (err) {
+    showError(err.message);
+    btn.innerHTML = `
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="17 8 12 3 7 8"></polyline>
+        <line x1="12" y1="3" x2="12" y2="15"></line>
+      </svg>`;
+  }
+}
+
+async function sendAllLatestToNas() {
+  const allNewMagnets = [];
+  const selectedRes = resFilter.value;
+
+  resources.forEach(r => {
+    if (r.status === 'success') {
+      const newMagnets = r.magnets.filter(m => {
+        const isUncopied = !r.copiedHashes?.includes(m.hash);
+        if (!isUncopied) return false;
+        if (selectedRes === 'all') return true;
+        const resPattern = new RegExp(`\\b${selectedRes}\\b`, 'i');
+        return resPattern.test(m.name);
+      });
+
+      newMagnets.forEach(m => {
+        allNewMagnets.push({ href: m.href, hash: m.hash, r });
+      });
+    }
+  });
+
+  if (allNewMagnets.length === 0) {
+    showError(selectedRes === 'all' ? '没有新的磁力链接可推送到 NAS' : `没有可推送的 ${selectedRes} 磁力链接`);
+    return;
+  }
+
+  const originalInnerHtml = sendAllNasBtn.innerHTML;
+  sendAllNasBtn.innerHTML = `<div class="status-spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px"></div>推送中...`;
+  
+  let successCount = 0;
+  for (const item of allNewMagnets) {
+    try {
+      await createSynoTask(item.href);
+      if (!item.r.copiedHashes) item.r.copiedHashes = [];
+      item.r.copiedHashes.push(item.hash);
+      successCount++;
+    } catch(e) {
+      showError(`推送出错: ${item.hash.substring(0, 8)}... ` + e.message);
+      break; 
+    }
+  }
+
+  saveResources();
+  renderAll();
+
+  if (successCount > 0) {
+    sendAllNasBtn.classList.add('copied');
+    sendAllNasBtn.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+      已推送 ${successCount} 个任务
+    `;
+    setTimeout(() => {
+      sendAllNasBtn.classList.remove('copied');
+      sendAllNasBtn.innerHTML = originalInnerHtml;
+    }, 2000);
+  } else {
+    sendAllNasBtn.innerHTML = originalInnerHtml;
   }
 }
 
